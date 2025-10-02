@@ -1,8 +1,10 @@
 import { createClient } from '@supabase/supabase-js';
-import Anthropic from '@anthropic-ai/sdk';
+import OpenAI from 'openai';
 
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY!,
+// Initialize OpenRouter client (uses OpenAI SDK with custom base URL)
+const openrouter = new OpenAI({
+  apiKey: process.env.OPENROUTER_API_KEY!,
+  baseURL: 'https://openrouter.ai/api/v1',
 });
 
 // Create a Supabase client with service role for vector search
@@ -12,23 +14,22 @@ const supabaseAdmin = createClient(
 );
 
 /**
- * Generate embeddings for text using Anthropic's embedding model
- * Note: Anthropic doesn't have an embedding API, so we'll use a placeholder
- * In production, you'd use OpenAI embeddings or another service
+ * Generate embeddings for text using OpenRouter
  */
 async function generateEmbedding(text: string): Promise<number[]> {
-  // This is a placeholder - in production, use OpenAI's text-embedding-3-small
-  // or another embedding service. For now, return a mock embedding.
+  try {
+    // Use text-embedding-3-small via OpenRouter
+    const response = await openrouter.embeddings.create({
+      model: 'openai/text-embedding-3-small',
+      input: text,
+    });
 
-  // You would do something like:
-  // const response = await openai.embeddings.create({
-  //   model: "text-embedding-3-small",
-  //   input: text,
-  // });
-  // return response.data[0].embedding;
-
-  // For now, return a zero vector (you'll need to implement real embeddings)
-  return new Array(1536).fill(0);
+    return response.data[0].embedding;
+  } catch (error) {
+    console.warn('Error generating embeddings, using zero vector:', error);
+    // Fallback to zero vector if embeddings fail
+    return new Array(1536).fill(0);
+  }
 }
 
 /**
@@ -62,7 +63,7 @@ export async function retrieveRelevantContext(
 }
 
 /**
- * Generate feedback using Claude with RAG context
+ * Generate feedback using OpenRouter with RAG context
  */
 export async function generateFeedback(
   essayText: string,
@@ -77,23 +78,24 @@ export async function generateFeedback(
     // Build the system prompt with RAG context
     const systemPrompt = buildSystemPrompt(relevantContext, essayType);
 
-    // Call Claude API
-    const response = await anthropic.messages.create({
-      model: 'claude-3-5-sonnet-20241022',
-      max_tokens: 4096,
-      temperature: 0.7,
-      system: systemPrompt,
+    // Call OpenRouter API with Grok 4 Fast (free)
+    const response = await openrouter.chat.completions.create({
+      model: 'x-ai/grok-4-fast:free',
       messages: [
+        {
+          role: 'system',
+          content: systemPrompt,
+        },
         {
           role: 'user',
           content: `Please provide detailed, paragraph-by-paragraph feedback on this ${essayType} personal statement:\n\n${essayText}`,
         },
       ],
+      max_tokens: 4096,
+      temperature: 0.7,
     });
 
-    const feedbackText = response.content[0].type === 'text'
-      ? response.content[0].text
-      : '';
+    const feedbackText = response.choices[0]?.message?.content || '';
 
     // Extract quality tags from the feedback
     const qualityTags = extractQualityTags(feedbackText);
